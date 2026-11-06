@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>カウントダウンカメラ</title>
+<style>
+  :root{
+    --bg:#000; --fg:#fff; --panel:rgba(20,20,22,.82); --line:rgba(255,255,255,.18);
+    --accent:#ffd23f; --rec:#ff3b30;
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+    font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;overflow:hidden;
+    -webkit-user-select:none;user-select:none;touch-action:manipulation}
+  #stage{position:fixed;inset:0}
+  #stage canvas{display:block;position:absolute;left:50%;top:50%;transition:transform .25s}
+  #ov{pointer-events:none}
+  .rot{display:inline-block;transform:rotate(var(--rot,0deg));transition:transform .25s}
+  #video{display:none}
+
+  /* 上部ステータス */
+  #status{position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);left:0;right:0;
+    display:flex;justify-content:center;pointer-events:none}
+  #recBadge{display:none;align-items:center;gap:8px;background:rgba(0,0,0,.55);
+    padding:6px 14px;border-radius:999px;font-weight:700;font-variant-numeric:tabular-nums}
+  #recBadge.on{display:flex}
+  #recBadge i{width:12px;height:12px;border-radius:50%;background:var(--rec);animation:blink 1s infinite}
+  @keyframes blink{50%{opacity:.2}}
+
+  /* 下部コントロール */
+  #bar{position:fixed;left:0;right:0;bottom:0;
+    padding:12px max(16px,env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 14px) max(16px,env(safe-area-inset-left,0px));
+    display:flex;align-items:center;justify-content:center;gap:18px;
+    background:linear-gradient(transparent,rgba(0,0,0,.6))}
+  .btn{appearance:none;border:1px solid var(--line);background:var(--panel);color:var(--fg);
+    border-radius:999px;min-width:56px;height:56px;padding:0 16px;font-size:16px;font-weight:700}
+  .btn:active{transform:scale(.96)}
+  #recBtn{width:78px;height:78px;border-radius:50%;border:5px solid #fff;background:transparent;padding:0;
+    display:flex;align-items:center;justify-content:center}
+  #recBtn span{display:block;width:56px;height:56px;border-radius:50%;background:var(--rec);transition:all .2s}
+  #recBtn.on span{width:30px;height:30px;border-radius:6px}
+  #cdBtn.on{background:var(--accent);color:#000;border-color:var(--accent)}
+
+  /* 設定パネル */
+  #settings{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;
+    padding:16px}
+  #settings[hidden]{display:none}
+  .card{background:#18181b;border:1px solid var(--line);border-radius:18px;padding:20px;width:min(420px,100%);
+    display:flex;flex-direction:column;gap:16px;max-height:100%;overflow:auto}
+  .card h2{margin:0;font-size:18px}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .row label{font-size:15px;color:#ccc}
+  .sec{display:flex;align-items:center;gap:10px}
+  .sec button{width:52px;height:52px;border-radius:12px;border:1px solid var(--line);background:#26262b;color:#fff;font-size:24px}
+  #secInput{width:90px;height:52px;font-size:30px;text-align:center;border-radius:12px;border:1px solid var(--line);
+    background:#000;color:var(--accent);font-weight:800;font-variant-numeric:tabular-nums}
+  select{height:44px;border-radius:10px;background:#26262b;color:#fff;border:1px solid var(--line);font-size:15px;padding:0 10px}
+  .presets{display:flex;flex-wrap:wrap;gap:8px}
+  .presets button{flex:1;min-width:56px;height:40px;border-radius:10px;border:1px solid var(--line);background:#26262b;color:#fff;font-size:15px}
+  .ok{height:52px;border-radius:12px;border:0;background:var(--accent);color:#000;font-size:17px;font-weight:800}
+  .note{font-size:12px;color:#999;line-height:1.5;margin:0}
+  #msg{position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);background:rgba(0,0,0,.8);padding:14px 18px;
+    border-radius:12px;font-size:15px;max-width:90%;text-align:center;display:none}
+</style>
+</head>
+<body>
+<video id="video" playsinline muted autoplay></video>
+<div id="stage"><canvas id="canvas"></canvas><canvas id="ov"></canvas></div>
+
+<div id="status"><div id="recBadge" class="rot"><i></i><span id="recTime">00:00</span></div></div>
+
+<div id="bar">
+  <button class="btn" id="setBtn" aria-label="設定"><span class="rot">⚙</span></button>
+  <button class="btn" id="cdBtn"><span class="rot" id="cdLabel">▶ 45</span></button>
+  <button id="recBtn" aria-label="録画"><span></span></button>
+  <button class="btn" id="flipBtn" aria-label="カメラ切替"><span class="rot">⟲</span></button>
+</div>
+
+<div id="settings" hidden>
+  <div class="card">
+    <h2>カウントダウン設定</h2>
+    <div class="row">
+      <label for="secInput">開始秒数</label>
+      <div class="sec">
+        <button id="minus">−</button>
+        <input id="secInput" type="number" inputmode="numeric" min="1" max="99" value="45">
+        <button id="plus">＋</button>
+      </div>
+    </div>
+    <div class="presets">
+      <button data-s="3">3</button><button data-s="5">5</button><button data-s="10">10</button>
+      <button data-s="15">15</button><button data-s="30">30</button><button data-s="60">60</button><button data-s="99">99</button>
+    </div>
+    <div class="row">
+      <label for="posSel">表示位置</label>
+      <select id="posSel">
+        <option value="center">中央</option>
+        <option value="top">上</option>
+        <option value="bottom">下</option>
+        <option value="tr">右上（小）</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="sizeSel">文字サイズ</label>
+      <select id="sizeSel">
+        <option value="1.3">特大</option>
+        <option value="1" selected>大</option>
+        <option value="0.7">中</option>
+        <option value="0.45">小</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="resSel">画質</label>
+      <select id="resSel">
+        <option value="1080">1080p</option>
+        <option value="720" selected>720p（おすすめ）</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="qualSel">容量</label>
+      <select id="qualSel">
+        <option value="1">標準</option>
+        <option value="0.5">節約（約半分）</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="splitSel">自動分割保存</label>
+      <select id="splitSel">
+        <option value="0">しない</option>
+        <option value="5">5分ごと</option>
+        <option value="10" selected>10分ごと</option>
+        <option value="15">15分ごと</option>
+        <option value="30">30分ごと</option>
+      </select>
+    </div>
+    <p class="note" id="estimate"></p>
+    <div class="row">
+      <label for="vibSel">0でバイブ</label>
+      <select id="vibSel"><option value="0" selected>オフ</option><option value="1">オン</option></select>
+    </div>
+    <p class="note">録画中は端末に一時保管し、停止を押したときにまとめてダウンロードフォルダへ保存します。<br>カウントダウンは 設定秒数 → 0 まで進み、0の次はまた設定秒数から始まります。止めるまで繰り返します。数字は画面にだけ表示され、録画した動画には入りません。</p>
+    <button class="ok" id="okBtn">OK</button>
+  </div>
+</div>
+<div id="recover" hidden style="position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px">
+  <div class="card">
+    <h2>未保存の録画</h2>
+    <p class="note" id="recoverText" style="font-size:15px;color:#ddd"></p>
+    <button class="ok" id="recoverSave">保存する</button>
+    <button class="btn" id="recoverDel" style="border-radius:12px">削除する</button>
+  </div>
+</div>
+<div id="msg"></div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const video = $('video'), canvas = $('canvas'), ctx = canvas.getContext('2d');
+  const ov = document.getElementById('ov'), octx = ov.getContext('2d');  // 数字は画面表示専用（録画されない）
+  const cdBtn = $('cdBtn'), recBtn = $('recBtn');
+
+  // ---- 設定（端末に記憶）----
+  const store = {
+    get(k, d){ try{ const v = localStorage.getItem('cdcam.'+k); return v===null?d:v; }catch(e){ return d; } },
+    set(k, v){ try{ localStorage.setItem('cdcam.'+k, v); }catch(e){} }
+  };
+  let seconds = clampSec(+store.get('sec2', 45));
+  let facing = store.get('facing', 'environment');
+  $('posSel').value = store.get('pos', 'center');
+  $('sizeSel').value = store.get('size2', '1');
+  $('resSel').value = store.get('res', '720');
+  $('vibSel').value = store.get('vib2', '0');
+  $('qualSel').value = store.get('qual', '1');
+  $('splitSel').value = store.get('split', '10');
+
+  function clampSec(n){ n = Math.round(n); if(!isFinite(n)) n = 10; return Math.min(99, Math.max(1, n)); }
+  function updateCdLabel(){ $('cdLabel').textContent = (running ? '■ ' : '▶ ') + seconds; cdBtn.classList.toggle('on', running); }
+
+  // ---- カウントダウン（時刻基準でズレない）----
+  let running = false, cdStart = 0, lastVal = null;
+  function currentValue(){
+    if(!running) return seconds;
+    const elapsed = Math.floor((performance.now() - cdStart) / 1000);
+    return seconds - (elapsed % (seconds + 1));   // seconds, ..., 1, 0, seconds, ...
+  }
+  cdBtn.onclick = () => {
+    running = !running;
+    if(running){ cdStart = performance.now(); lastVal = null; }
+    updateCdLabel();
+  };
+
+  // ---- カメラ ----
+  let stream = null;
+  async function startCamera(){
+    if(stream) stream.getTracks().forEach(t => t.stop());
+    const h = +$('resSel').value, w = Math.round(h * 16 / 9);
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({
+        video:{ facingMode:{ideal:facing}, width:{ideal:w}, height:{ideal:h}, frameRate:{ideal:30} },
+        audio:{ echoCancellation:false, noiseSuppression:false }
+      });
+    }catch(e){
+      try{ stream = await navigator.mediaDevices.getUserMedia({ video:{facingMode:{ideal:facing}}, audio:true }); }
+      catch(e2){ showMsg('カメラ／マイクを使えません。ブラウザの権限を許可してください。\n（HTTPS で開く必要があります）', 0); return; }
+    }
+    video.srcObject = stream;
+    await video.play().catch(()=>{});
+  }
+  $('flipBtn').onclick = async () => {
+    if(recorder) return showMsg('録画中は切り替えできません');
+    facing = facing === 'environment' ? 'user' : 'environment';
+    store.set('facing', facing);
+    await startCamera();
+  };
+
+  // ---- 端末の持ち方（画面の自動回転オフでも検出）----
+  let devRot = 0, recRot = 0;
+  window.addEventListener('devicemotion', e => {
+    const g = e.accelerationIncludingGravity;
+    if(!g || g.x == null || g.y == null) return;
+    if(Math.hypot(g.x, g.y) < 4) return;              // 平置きのときは変えない
+    const a = (Math.atan2(g.x, g.y) * 180 / Math.PI + 360) % 360;
+    const t = (Math.round(a / 90) * 90) % 360;
+    let d = Math.abs(a - t); d = Math.min(d, 360 - d);
+    if(d < 30) devRot = t;                            // 境目でパタパタしないよう余裕を持たせる
+  });
+  function screenAngle(){
+    if(screen.orientation && typeof screen.orientation.angle === 'number') return screen.orientation.angle;
+    return ((window.orientation || 0) + 360) % 360;
+  }
+
+  // ---- 描画（プレビュー＝録画内容）----
+  const stage = $('stage');
+  let layoutKey = '';
+  function layout(rot){
+    const cw = canvas.width, ch = canvas.height, W = stage.clientWidth, H = stage.clientHeight;
+    const key = [cw, ch, W, H, rot].join();
+    if(key === layoutKey) return;
+    layoutKey = key;
+    const swap = rot % 180 !== 0;
+    const fw = swap ? ch : cw, fh = swap ? cw : ch;    // 画面上での見かけの幅・高さ
+    const k = Math.min(W / fw, H / fh);
+    for(const c of [canvas, ov]){
+      c.style.width = (cw * k) + 'px';
+      c.style.height = (ch * k) + 'px';
+      c.style.transform = `translate(-50%,-50%) rotate(${rot}deg)`;
+    }
+    document.body.style.setProperty('--rot', (rot > 180 ? rot - 360 : rot) + 'deg');
+  }
+  function draw(){
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if(vw && vh){
+      const rot = recorder ? recRot : (devRot - screenAngle() + 360) % 360;
+      const swap = rot % 180 !== 0;
+      const tw = swap ? vh : vw, th = swap ? vw : vh;
+      if(!recorder && (canvas.width !== tw || canvas.height !== th)){ canvas.width = tw; canvas.height = th; }
+      const cw = canvas.width, ch = canvas.height;
+      layout(rot);
+      // 映像を持ち方に合わせて回転して描く（録画中は開始時の向きで固定）
+      const s = swap ? Math.min(cw / vh, ch / vw) : Math.min(cw / vw, ch / vh);
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cw, ch);
+      ctx.save();
+      ctx.translate(cw / 2, ch / 2);
+      ctx.rotate(-rot * Math.PI / 180);
+      ctx.drawImage(video, -vw * s / 2, -vh * s / 2, vw * s, vh * s);
+      ctx.restore();
+      if(ov.width !== cw || ov.height !== ch){ ov.width = cw; ov.height = ch; }
+      octx.clearRect(0, 0, cw, ch);
+
+      const val = currentValue();
+      if(running && val === 0 && lastVal !== 0 && $('vibSel').value === '1' && navigator.vibrate) navigator.vibrate(300);
+      lastVal = val;
+
+      const pos = $('posSel').value;
+      const base = Math.min(cw, ch);
+      let size = base * (+$('sizeSel').value);
+      if(pos === 'tr') size = base * 0.22;
+      else {
+        octx.font = `900 ${size}px system-ui, "Roboto", "Noto Sans JP", sans-serif`;
+        const w = octx.measureText(seconds >= 10 ? "88" : "8").width + size * 0.08;
+        size = Math.min(size, size * cw * 0.96 / w, ch * 0.95);
+      }
+      octx.font = `900 ${size}px system-ui, "Roboto", "Noto Sans JP", sans-serif`;
+      octx.textAlign = pos === 'tr' ? 'right' : 'center';
+      octx.textBaseline = 'middle';
+      let x = cw / 2, y = ch / 2;
+      if(pos === 'top') y = size * 0.6 + ch * 0.04;
+      if(pos === 'bottom') y = ch - size * 0.6 - ch * 0.04;
+      if(pos === 'tr'){ x = cw - cw * 0.04; y = size * 0.6 + ch * 0.04; }
+      const text = String(val);
+      octx.lineJoin = 'round';
+      octx.lineWidth = Math.max(4, size * 0.08);
+      octx.strokeStyle = 'rgba(0,0,0,.85)';
+      octx.strokeText(text, x, y);
+      octx.fillStyle = !running ? 'rgba(255,255,255,.55)' : (val <= 3 ? '#ff3b30' : '#ffffff');
+      octx.fillText(text, x, y);
+    }
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+
+  // ---- 録画（長時間でも落ちないよう自動分割保存）----
+  let recorder = null, outStream = null, mime = '', recStart = 0, recTimer = null;
+  let segTimer = null, segIdx = 0, sessionName = '', splitting = false;
+  function pickMime(){
+    const c = ['video/mp4;codecs=avc1,mp4a.40.2','video/mp4','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
+    for(const m of c){ if(window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m; }
+    return '';
+  }
+  function videoBps(){
+    return (+$('resSel').value >= 1080 ? 12e6 : 6e6) * (+$('qualSel').value);
+  }
+  function updateEstimate(){
+    const gbPerHour = (videoBps() + 128e3) * 3600 / 8 / 1e9;
+    const split = +$('splitSel').value;
+    let t = `1時間あたり 約${gbPerHour.toFixed(1)}GB`;
+    if(split) t += `／1ファイル 約${(gbPerHour * split / 60 * 1000).toFixed(0)}MB`;
+    $('estimate').textContent = t;
+  }
+  ['resSel','qualSel','splitSel'].forEach(id => $(id).addEventListener('change', updateEstimate));
+
+  // ---- 録画データの一時保管（端末のストレージ。メモリを使わず、停止まで保存確認を出さない）----
+  const Store = {
+    db: null, mem: [],
+    open(){
+      return new Promise(res => {
+        try{
+          const rq = indexedDB.open('cdcam', 1);
+          rq.onupgradeneeded = () => {
+            const st = rq.result.createObjectStore('chunks', { keyPath:'k', autoIncrement:true });
+            st.createIndex('session', 'session');
+          };
+          rq.onsuccess = () => { this.db = rq.result; res(true); };
+          rq.onerror = () => res(false);
+        }catch(e){ res(false); }
+      });
+    },
+    add(rec){
+      if(!this.db){ this.mem.push(rec); return Promise.resolve(); }
+      return new Promise(res => {
+        try{
+          const tx = this.db.transaction('chunks', 'readwrite');
+          tx.objectStore('chunks').add(rec);
+          tx.oncomplete = () => res();
+          tx.onerror = tx.onabort = () => { this.mem.push(rec); res(); };   // 書けなければメモリに退避
+        }catch(e){ this.mem.push(rec); res(); }
+      });
+    },
+    get(session){
+      const fromMem = this.mem.filter(x => x.session === session);
+      if(!this.db) return Promise.resolve(fromMem);
+      return new Promise(res => {
+        const rq = this.db.transaction('chunks').objectStore('chunks').index('session').getAll(session);
+        rq.onsuccess = () => res(rq.result.concat(fromMem));
+        rq.onerror = () => res(fromMem);
+      });
+    },
+    sessions(){
+      if(!this.db) return Promise.resolve([]);
+      return new Promise(res => {
+        const out = [];
+        const rq = this.db.transaction('chunks').objectStore('chunks').index('session').openKeyCursor(null, 'nextunique');
+        rq.onsuccess = () => { const c = rq.result; if(c){ out.push(c.key); c.continue(); } else res(out); };
+        rq.onerror = () => res(out);
+      });
+    },
+    remove(session){
+      this.mem = this.mem.filter(x => x.session !== session);
+      if(!this.db) return Promise.resolve();
+      return new Promise(res => {
+        const tx = this.db.transaction('chunks', 'readwrite');
+        const rq = tx.objectStore('chunks').index('session').openCursor(IDBKeyRange.only(session));
+        rq.onsuccess = () => { const c = rq.result; if(c){ c.delete(); c.continue(); } };
+        tx.oncomplete = tx.onerror = tx.onabort = () => res();
+      });
+    }
+  };
+  // 書き出し済みの記録（次回起動時に端末から消す）
+  const doneList = {
+    get(){ try{ return JSON.parse(localStorage.getItem('cdcam.done') || '[]'); }catch(e){ return []; } },
+    add(sn){ const l = this.get(); if(!l.includes(sn)) l.push(sn); try{ localStorage.setItem('cdcam.done', JSON.stringify(l)); }catch(e){} },
+    del(sn){ try{ localStorage.setItem('cdcam.done', JSON.stringify(this.get().filter(x => x !== sn))); }catch(e){} }
+  };
+  const storeReady = Store.open();
+
+  let pending = [];
+  recBtn.onclick = () => recorder ? stopRec() : startRec();
+  async function startRec(){
+    if(!stream) return showMsg('カメラが起動していません');
+    if(!window.MediaRecorder) return showMsg('この端末では録画できません');
+    await storeReady;
+    try{ navigator.storage && navigator.storage.persist && navigator.storage.persist(); }catch(e){}
+    outStream = canvas.captureStream(30);
+    stream.getAudioTracks().forEach(t => outStream.addTrack(t));
+    recRot = (devRot - screenAngle() + 360) % 360;
+    mime = pickMime();
+    const d = new Date(), p = n => String(n).padStart(2,'0');
+    sessionName = `countdown_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+    segIdx = 1;
+    const split = +$('splitSel').value;
+    splitting = split > 0;
+    pending = [];
+    startSegment();
+    if(splitting) segTimer = setInterval(nextSegment, split * 60000);
+    recStart = Date.now();
+    recBtn.classList.add('on'); $('recBadge').classList.add('on');
+    recTimer = setInterval(() => {
+      const s = Math.floor((Date.now() - recStart) / 1000);
+      const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60;
+      $('recTime').textContent = (h ? h + ':' : '') + String(m).padStart(2,'0') + ':' + String(s%60).padStart(2,'0');
+    }, 250);
+    if(!running) cdBtn.onclick();   // 録画開始と同時にカウントダウンも開始
+  }
+  function startSegment(){
+    let r;
+    try{ r = new MediaRecorder(outStream, mime ? { mimeType:mime, videoBitsPerSecond:videoBps(), audioBitsPerSecond:128000 } : {}); }
+    catch(e){ r = new MediaRecorder(outStream); }
+    const seg = segIdx, session = sessionName, split = splitting;
+    // 1秒ごとのデータをすぐ端末に書き込む（メモリにためない）
+    r.ondataavailable = e => {
+      if(e.data && e.data.size){
+        pending.push(Store.add({ session, seg, split, type:(r.mimeType || mime || 'video/webm').split(';')[0], blob:e.data }));
+      }
+    };
+    r.onstop = () => { if(r._final) exportSession(session); };
+    r.start(1000);
+    recorder = r;
+  }
+  function nextSegment(){
+    const old = recorder;
+    segIdx++;
+    startSegment();      // 先に次を開始してから前を止める（途切れを最小に）
+    old.stop();          // ここでは保存確認を出さない
+  }
+  function stopRec(){
+    clearInterval(segTimer); clearInterval(recTimer);
+    const old = recorder;
+    recorder = null;
+    old._final = true;
+    old.stop();
+    outStream.getVideoTracks().forEach(t => t.stop());
+    recBtn.classList.remove('on'); $('recBadge').classList.remove('on'); $('recTime').textContent = '00:00';
+    showMsg('保存しています…', 0);
+  }
+  // 停止後に、端末に保管した分をまとめて書き出す
+  async function exportSession(session){
+    await Promise.all(pending);
+    const recs = await Store.get(session);
+    if(!recs.length){ showMsg('録画データがありません'); return; }
+    const segs = new Map();
+    for(const x of recs){ if(!segs.has(x.seg)) segs.set(x.seg, []); segs.get(x.seg).push(x); }
+    const names = [];
+    for(const [seg, list] of [...segs.entries()].sort((a, b) => a[0] - b[0])){
+      const type = list[0].type, ext = type.includes('mp4') ? 'mp4' : 'webm';
+      const blob = new Blob(list.map(x => x.blob), { type });
+      const name = session + (list[0].split ? '_part' + String(seg).padStart(2,'0') : '') + '.' + ext;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10 * 60000);
+      names.push(name);
+      await new Promise(r => setTimeout(r, 400));
+    }
+    doneList.add(session);
+    setTimeout(() => Store.remove(session).then(() => doneList.del(session)), 10 * 60000);
+    showMsg(`保存しました（ダウンロードフォルダ・${names.length}ファイル）\n` + names[0] + (names.length > 1 ? ' ほか' : ''), 4000);
+  }
+  // 前回、保存前に終了した録画があれば復旧を案内
+  async function checkLeftovers(){
+    await storeReady;
+    const done = doneList.get();
+    const all = await Store.sessions();
+    for(const sn of all.filter(x => done.includes(x))){ await Store.remove(sn); doneList.del(sn); }
+    const left = all.filter(x => !done.includes(x));
+    if(!left.length) return;
+    $('recoverText').textContent = `前回、保存されずに終わった録画が ${left.length} 件あります。`;
+    $('recover').hidden = false;
+    $('recoverSave').onclick = async () => { $('recover').hidden = true; for(const sn of left) await exportSession(sn); };
+    $('recoverDel').onclick = async () => { $('recover').hidden = true; for(const sn of left) await Store.remove(sn); showMsg('削除しました'); };
+  }
+
+  // ---- 設定画面 ----
+  const secInput = $('secInput');
+  $('setBtn').onclick = () => {
+    secInput.value = seconds; updateEstimate(); $('settings').hidden = false;
+  };
+  $('minus').onclick = () => secInput.value = clampSec(+secInput.value - 1);
+  $('plus').onclick  = () => secInput.value = clampSec(+secInput.value + 1);
+  document.querySelectorAll('.presets button').forEach(b => b.onclick = () => secInput.value = b.dataset.s);
+  $('okBtn').onclick = async () => {
+    const newSec = clampSec(+secInput.value);
+    if(newSec !== seconds){ seconds = newSec; if(running){ cdStart = performance.now(); } }
+    store.set('sec2', seconds);
+    store.set('pos', $('posSel').value); store.set('size2', $('sizeSel').value); store.set('vib2', $('vibSel').value);
+    store.set('qual', $('qualSel').value); store.set('split', $('splitSel').value);
+    const resChanged = store.get('res','720') !== $('resSel').value;
+    store.set('res', $('resSel').value);
+    $('settings').hidden = true;
+    updateCdLabel();
+    if(resChanged && !recorder) await startCamera();
+  };
+
+  // ---- その他 ----
+  let msgT;
+  function showMsg(t, ms = 2500){
+    const m = $('msg'); m.textContent = t; m.style.whiteSpace = 'pre-line'; m.style.display = 'block';
+    clearTimeout(msgT); if(ms) msgT = setTimeout(() => m.style.display = 'none', ms);
+  }
+  let wake = null;
+  async function keepAwake(){ try{ wake = await navigator.wakeLock.request('screen'); }catch(e){} }
+  document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible') keepAwake(); });
+
+  updateCdLabel();
+  keepAwake();
+  startCamera();
+  checkLeftovers();
+})();
+</script>
+</body>
+</html>
